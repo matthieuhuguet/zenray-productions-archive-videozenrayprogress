@@ -58,3 +58,5 @@ Journal chronologique append only. Plus ancienne entrée en haut, plus récente 
 - Fait : Fix erreur "no-token" sur le formulaire prospect de matthieuhuguet.com/reels/zenrayprogress. Cause : la fonction serverless /api/prospect (ZenRayWebsite/api/prospect.js) lit process.env.GITHUB_TOKEN, et le projet Vercel zenray-productions n'avait AUCUNE variable d'env -> 500 {error:'no-token'}. Fix : ajout de GITHUB_TOKEN (token gh CLI, scope repo) aux env Vercel Production + Development, redéploiement prod, endpoint testé OK (honeypot -> {"ok":true} HTTP 200).
 - Blocage : token utilisé = gho_ du gh CLI, peut expirer/être révoqué. À remplacer par un PAT fine-grained dédié (écriture zenray-data + zenray-prospects) pour la durabilité.
 - Apprentissage : les variables d'env Vercel ne s'appliquent qu'aux NOUVEAUX déploiements ; après vercel env add il faut redéployer.
+
+# zr-version-test 2026-06-12 00:17
