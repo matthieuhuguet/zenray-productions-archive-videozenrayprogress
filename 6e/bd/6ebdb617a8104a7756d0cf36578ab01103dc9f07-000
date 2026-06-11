@@ -1,0 +1,50 @@
+# VideoZenRayProgress — Instructions Claude
+
+## Contexte projet
+Montage vidéo DaVinci Resolve. Assets audio/vidéo produits via Python + ffmpeg en dehors de DaVinci.
+
+## Stack
+- **ffmpeg** — conversion, extraction frames, normalisation audio, assemblage vidéo
+- **Python 3 + Pillow** — génération d'animations texte frame par frame
+- **demucs htdemucs_6s** — séparation de sources audio (chunks 2 sec max)
+- **yt-dlp** — téléchargement YouTube
+
+## Conventions fichiers
+- **Nommage : Pascal Case avec espaces** — ex: `Word Anim.mov`, `Chunk 02 Click.wav`
+- **Audio SFX** → `Cliquetis/` — normalisés -16 LUFS, fade in/out 0.1s
+- **Frames** → `Frames 30s/` et `Screen Rec Frames/`
+- **Vidéo alpha** → ProRes 4444 `.mov` (`-c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le`)
+- **Supprimés mais récupérables** → `Trash/`
+
+## Scripts — RÈGLE ABSOLUE
+
+Tous les scripts Python du projet sont dans :
+`/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Scripts/`
+
+**Ne JAMAIS laisser un script uniquement dans `/tmp/`** — `/tmp/` est effacé entre les sessions.
+À chaque nouveau script ou modification : copier/sauvegarder dans `Scripts/`.
+
+| Fichier | Rôle |
+|---|---|
+| `word_anim_seq.py` | Word Anim 1 — "Before you create / you test…" |
+| `word_anim_23.py` | Word Anim 2 & 3 — phrases uniques |
+| `credit_single.py` | Crédit 1 ligne (Realisation) |
+| `credit_15.py` | Crédits 1.5s (Music, Photography) |
+| `pulse_anim.py` | Logo pulse ZenRay 60fps |
+| `logo_slideshow.py` | Slideshow logos + shutter son |
+| `cube_flip.py` | Transition Notion → ZenRay Block |
+| `iris_transition.py` | Iris transition ZenRay Block → app icon |
+
+## Animation texte
+- Police : AnthropicSerif-Regular, drop shadow 7px centré (offset 0,0)
+- Entrée : ease_out^4, séquentiel WORD_DELAY=3f, OFFSET_IN=150px
+- Sortie : ease_in^3, séquentiel EXIT_DELAY=2f, OFFSET_OUT=100px, drift haut
+- Output : ProRes 4444 alpha
+
+## Règles audio demucs
+- Toujours couper en chunks de 2 sec avant demucs
+- Modèle : htdemucs_6s (6 stems, inclut piano)
+- `--two-stems piano` → `piano.wav` + `no_piano.wav`
+
+## PROGRESS.md
+Append only. Lire en début de session.
