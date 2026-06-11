@@ -1,0 +1,60 @@
+# PROGRESS — VideoZenRayProgress
+
+Journal chronologique append only. Plus ancienne entrée en haut, plus récente en bas.
+
+---
+
+2026-06-03 01:45
+- Fait : Session de travail audio/vidéo. yt-dlp installé (déjà présent). Téléchargé A (Before we ship a Claude model, best video+audio mp4) et B (Prompt In F Minor, wav only) dans VideoZenRayProgress/. Extraction 30 frames (1/sec, 30 premières sec) de A dans Frames 30s/. Extraction 13 frames (1/sec) du screen recording dans Screen Rec Frames/. Audio WAV du screen recording impossible (video only, confirmé ffprobe).
+- Fait : Séparation de sources audio via demucs htdemucs_6s (modèle 6 stems). Chunks de 2 sec nécessaires car demucs échoue sur fichiers longs. 15 chunks x 2 sec générés, séparés en piano / no_piano (click). Dossier A_30s_stems/ (maintenant en Trash/).
+- Fait : Sélection manuelle de 5 SFX dans Cliquetis/ : Chunk 02 Click, Chunk 07 Click, Chunk 10 Click, Sfx 002 0.45s, Sfx 003 0.84s. Tous normalisés -16 LUFS, fade in/out 0.1s.
+- Fait : Renommage Pascal Case avec espaces sur tout le dossier VideoZenRayProgress/. Convention : mots séparés par espaces, première lettre de chaque mot en majuscule, extension en minuscule.
+- Fait : Génération animation texte Python + Pillow → ProRes 4444 (.mov, alpha transparent) WordAnim.mov. Phrase "Before a new Claude model ships," en Anthropic Serif Regular 108px. Chaque mot arrive depuis direction aléatoire (offset 160px, ease_out^4), puis sort vers le haut (80px) avec fade séquentiel mot par mot. Durée : 2.17s. Fond transparent compatible DaVinci drag & drop.
+- Décision : demucs en chunks 2 sec > fichier long (échoue ou donne mauvais résultat sur 30 sec). Python + ffmpeg > DaVinci Fusion pour animations texte complexes (30 sec vs 30 min).
+- Prochain : Intégrer WordAnim.mov dans DaVinci sur V2. Ajuster timing avec les frames et les SFX Cliquetis/. Tester le rendu final.
+
+
+2026-06-03 22:00
+- Fait : (Re)écrit le plan de la vidéo ads pour finalisation + post. Format reel vertical 9:16, ~30 s, calqué sur la pub Anthropic "Before we ship a Claude model" (retenue cinématographique, serif animé, piano + tension, aucune voix). Structure en 3 beats = les 3 phrases d'ad de la landing (= Word Anim 1/2/3 déjà rendus), chacune collée à un geste concret de l'app (créer/casser -> rassembler -> se souvenir), résolution sur "ZenRayProgress / Your computer, in a tab." + carte CTA (URL landing + accroche prix). Découpage 6 plans, table temps/image/texte/son fournie à Matthieu.
+- Apprentissage : les 3 phrases exactes viennent de ZenRayWebsite/public/articles/zenrayprogress.json (adLines). Tagline = "Your computer, in a tab." Assets prêts : Screen Rec Frames, Word Anim 1/2/3.mov, Prompt In F Minor.wav, Tension Audio.wav, Cliquetis/. Montage DaVinci.
+- Prochain : Matthieu finalise le montage et poste.
+
+2026-06-04 HH:MM
+- Fait : Régénération des 3 crédits (v2) — 2 lignes max, noms en MAJUSCULES blanc, "Prompt in F Minor" en italique. Exactement 2.00s chacun (48 frames @ 24fps). Mixte fonts par mot (Regular + Italic sur la même ligne).
+- Décision : SZ1=60px (catégorie, gris) / SZ2=86px (nom, blanc). HOLD_F calculé dynamiquement pour garantir 48 frames exactement.
+- Prochain : Montage DaVinci — intégrer les 3 crédits dans la timeline.
+
+2026-06-04 HH:MM
+- Fait : Scripts copiés dans Scripts/ (9 fichiers). CLAUDE.md mis à jour avec la règle absolue "jamais uniquement dans /tmp/".
+- Décision : Scripts/ = source de vérité pour tous les scripts Python du projet.
+- Prochain : Slideshow régénéré avec Miro (= Make). Vérifier le résultat dans DaVinci.
+
+2026-06-04 22:40
+- Fait : Vidéo finale ZenRayProgress002.mov terminée (4K HEVC, 36 s, 81 Mo). Convertie en demo.mp4 web (H.264, 1080p, faststart, ~7,5 Mo). Intégrée directement sur la page projet du site : remplacé le bloc videoPlaceholder (block 0) de public/articles/zenrayprogress.json par un bloc video pointant /projects/zenrayprogress/demo.mp4, poster = thumbnail.svg. Ajout du support poster dans ArticleRenderer.jsx. Copié thumbnail.svg (la minia de matthieuhuguet.com) dans Frames_ZenRayProgress/. Build ZenRayWebsite vert.
+- Prochain : Commit + déployer ZenRayWebsite. Ajouter variante webm si besoin de poids.
+
+2026-06-04 23:05
+- Fait : Streaming HLS adaptatif mis en place. Script Scripts/make_hls.sh génère 4 qualités (360p/720p/1080p/4K) depuis la source 4K, segments .ts de 4s (total 32 Mo, segment max 4 Mo). Poussé dans nouveau repo public GitHub matthieuhuguet/ZenRayWebsite-HLS (racine = master.m3u8 + v360p/v720p/v1080p/v2160p). Servi via jsDelivr : https://cdn.jsdelivr.net/gh/matthieuhuguet/ZenRayWebsite-HLS@main/master.m3u8 (HTTP 200 vérifié). Site : ajout composant HlsVideo dans ArticleRenderer.jsx (Safari natif, Chrome via hls.js en dynamic import), branché dans la fenêtre macOS + bloc video. Bloc 0 du json pointe le manifest HLS. hls.js installé. Build vert.
+- Décision : repo dédié ZenRayWebsite-HLS plutôt que réutiliser zenray-vid-01 (qui est chiffré AES). HLS + GitHub + jsDelivr = streaming adaptatif gratuit, qualité auto selon la connexion, la 4K source reste intacte.
+- Prochain : Vérifier lecture sur localhost (Chrome), puis commit + déployer ZenRayWebsite. URL @main mutable -> si re-upload, penser au purge jsDelivr ou figer sur un commit sha.
+
+2026-06-04 23:18
+- Fait : Re-découpe HLS en segments 2s (max 2,3 Mo, < 3 Mo demandé), force-push sur ZenRayWebsite-HLS (commit ca8f5be). URL du site figée sur @ca8f5be (immutable, évite le cache jsDelivr périmé de l'ancienne découpe 4s). Corrigé le lecteur HlsVideo + page hls-debug : hls.js EN PREMIER, HLS natif (Safari) en fallback — Chrome renvoyait "maybe" sur canPlayType HLS puis échouait ("no supported source"). Script make_hls.sh corrigé pour ne plus effacer le .git du repo HLS (rm sélectif au lieu de rm -rf OUT).
+- Prochain : Tester lecture Chrome (doit jouer via hls.js). Puis commit + déploiement ZenRayWebsite.
+
+2026-06-04 23:04
+- Fait : Réorganisé le repo HLS public ZenRayWebsite-HLS avec un sous-dossier par projet : master.m3u8 + variantes déplacés sous ZenRayProgress/ (commit cc01c3d). Permet d'héberger plusieurs projets dans le même repo. URL site + page debug mises à jour vers @cc01c3d/ZenRayProgress/master.m3u8 (jsDelivr 200). Supprimé le demo.mp4 résiduel de ZenRayWebsite (plus utilisé) : le site n'héberge plus aucune vidéo, seulement thumbnail.svg + l'URL jsDelivr. Build vert.
+- Prochain : Commit + déploiement ZenRayWebsite en prod.
+
+2026-06-04 23:10
+- Fait : Sélecteur de qualité (Auto/360p/720p/1080p/4K) ajouté au lecteur HlsVideo, pilote hls.currentLevel. Fix recadrage plein écran (cover -> contain via fullscreenchange). Commit + push ZenRayWebsite sur master (dc55376). Déploiement Vercel Production lancé (zenray-productions, status Building). HLS rangé sous ZenRayProgress/ dans le repo public, servi via jsDelivr @cc01c3d.
+- Prochain : Vérifier le site en prod une fois le build Vercel terminé.
+
+2026-06-04 23:25
+- Fait : Transcript 1:1 complet de la session (page ZenRayProgress, intégration vidéo HLS) écrit dans docs/SESSION-2026-06-04-page-zenrayprogress.md, vérifié par 2 agents parallèles contre git/PROGRESS/code. Insights et choix de design ajoutés en section datée dans le CLAUDE.md global (~/.claude/CLAUDE.md) : architecture HLS+GitHub+jsDelivr, figer le commit sha, génération ffmpeg, lecteur hls.js prioritaire, sélecteur de qualité, fix plein écran, déploiement Vercel.
+- Apprentissage (corrections d'audit) : bloc reste type videoPlaceholder (pas video) ; playlist variante = stream.m3u8 (pas index.m3u8) ; source 78 Mo (pas 81) ; taglines "Your computer" et "Every files" coexistent.
+
+2026-06-05 00:05
+- Fait : Fix erreur "no-token" sur le formulaire prospect de matthieuhuguet.com/reels/zenrayprogress. Cause : la fonction serverless /api/prospect (ZenRayWebsite/api/prospect.js) lit process.env.GITHUB_TOKEN, et le projet Vercel zenray-productions n'avait AUCUNE variable d'env -> 500 {error:'no-token'}. Fix : ajout de GITHUB_TOKEN (token gh CLI, scope repo) aux env Vercel Production + Development, redéploiement prod, endpoint testé OK (honeypot -> {"ok":true} HTTP 200).
+- Blocage : token utilisé = gho_ du gh CLI, peut expirer/être révoqué. À remplacer par un PAT fine-grained dédié (écriture zenray-data + zenray-prospects) pour la durabilité.
+- Apprentissage : les variables d'env Vercel ne s'appliquent qu'aux NOUVEAUX déploiements ; après vercel env add il faut redéployer.
