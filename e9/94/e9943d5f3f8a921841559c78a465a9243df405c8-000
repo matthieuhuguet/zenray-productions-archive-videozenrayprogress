@@ -1,0 +1,156 @@
+from PIL import Image, ImageDraw, ImageFont
+import os, subprocess, random
+
+BASE_OUT = "/Users/zenray/Create/Build/Productions/VideoZenRayProgress/"
+W, H  = 1920, 1080
+FPS   = 24
+TARGET = int(FPS * 1.5)  # 36 frames = 1.5s
+
+FONT_REG = "/Users/zenray/Library/Fonts/AnthropicSerif-Regular.ttf"
+FONT_ITA = "/Users/zenray/Library/Fonts/AnthropicSerif-Italic.ttf"
+
+GAP_W     = 22
+LINE_GAP  = 16
+WORD_DELAY = 2
+ANIM_F     = 6
+LINE_PAUSE = 3
+EXIT_DELAY = 1
+EXIT_F     = 5
+OFFSET_IN  = 100
+OFFSET_OUT = 55
+
+def eo(t): return max(0.0, min(1.0, 1-(1-t)**4))
+def ei(t): return max(0.0, min(1.0, t**3))
+
+def generate(lines_spec, out_name, seed=1):
+    """
+    lines_spec: list of lines, each = list of (text, font_path)
+    All white, anchor=ls (baseline-aligned).
+    """
+    random.seed(seed)
+    OUT_DIR  = f"/tmp/cred15_{seed}"
+    OUT_FILE = BASE_OUT + out_name
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for f in os.listdir(OUT_DIR): os.remove(f"{OUT_DIR}/{f}")
+
+    # Font size : réduit si nécessaire pour tenir dans 1800px
+    SZ = 72
+    while SZ > 36:
+        fc = {}
+        def gf(fp, sz=SZ):
+            if fp not in fc: fc[fp] = ImageFont.truetype(fp, sz)
+            return fc[fp]
+        if all(
+            sum(gf(fp).getbbox(t)[2]-gf(fp).getbbox(t)[0] for t,fp in line)
+            + GAP_W*(len(line)-1) <= 1800
+            for line in lines_spec
+        ):
+            break
+        SZ -= 2
+
+    fc2 = {}
+    def gf(fp):
+        if fp not in fc2: fc2[fp] = ImageFont.truetype(fp, SZ)
+        return fc2[fp]
+
+    # Baseline commune depuis les métriques de la police
+    ascent, descent = gf(FONT_REG).getmetrics()
+    line_h  = ascent + descent
+    total_h = line_h * len(lines_spec) + LINE_GAP * (len(lines_spec)-1)
+    base_y0 = (H - total_h) // 2 + ascent   # baseline ligne 0
+
+    # Layout
+    line_data = []
+    for li, line in enumerate(lines_spec):
+        base_y = base_y0 + li * (line_h + LINE_GAP)
+        wws    = [gf(fp).getbbox(t)[2]-gf(fp).getbbox(t)[0] for t,fp in line]
+        total_w = sum(wws) + GAP_W*(len(line)-1)
+        x = (W - total_w) // 2
+        words = []
+        for i,(t,fp) in enumerate(line):
+            words.append({'text': t, 'font': gf(fp), 'x': x, 'y': base_y})
+            x += wws[i] + GAP_W
+        line_data.append(words)
+
+    flat = [w for line in line_data for w in line]
+    n    = len(flat)
+
+    # Timing
+    line_starts = []
+    t = 0
+    for words in line_data:
+        line_starts.append(t)
+        t += (len(words)-1)*WORD_DELAY + ANIM_F + LINE_PAUSE
+
+    last_li        = len(line_data)-1
+    line_last_done = line_starts[last_li] + (len(line_data[last_li])-1)*WORD_DELAY + ANIM_F
+    exit_tail      = (n-1)*EXIT_DELAY + EXIT_F
+    HOLD_F         = max(TARGET - line_last_done - exit_tail, 1)
+    all_done       = line_last_done + HOLD_F
+    TOTAL          = all_done + (n-1)*EXIT_DELAY + EXIT_F
+
+    print(f"  {out_name}: {TOTAL} frames = {TOTAL/FPS:.2f}s  (sz={SZ}px, hold={HOLD_F}f)")
+
+    DIRS = ['left','right','top']
+    dirs = [[random.choice(DIRS) for _ in line] for line in line_data]
+
+    for frame in range(TOTAL):
+        img  = Image.new("RGBA",(W,H),(0,0,0,0))
+        draw = ImageDraw.Draw(img)
+        eidx = 0
+
+        for li, words in enumerate(line_data):
+            ls = line_starts[li]
+            for wi, word in enumerate(words):
+                fx, fy = word['x'], word['y']
+                e_in = frame - (ls + wi*WORD_DELAY)
+
+                if e_in < 0:
+                    eidx += 1; continue
+
+                if e_in >= ANIM_F:
+                    px, py = fx, fy; alpha = 255
+                else:
+                    t_in  = eo(e_in/ANIM_F)
+                    d     = dirs[li][wi]
+                    ox = -OFFSET_IN if d=='left' else (OFFSET_IN if d=='right' else 0)
+                    oy = -OFFSET_IN if d=='top'  else 0
+                    px = int(fx + ox*(1-t_in))
+                    py = int(fy + oy*(1-t_in))
+                    alpha = int(255*t_in)
+
+                e_out = frame - (all_done + eidx*EXIT_DELAY)
+                dy = 0
+                if e_out >= 0:
+                    t_out = ei(min(e_out/EXIT_F,1.0))
+                    alpha = int(255*(1-t_out))
+                    dy    = int(-OFFSET_OUT*t_out)
+
+                if alpha > 0:
+                    draw.text((px, py+dy), word['text'],
+                              font=word['font'], fill=(255,255,255,alpha), anchor="ls")
+                eidx += 1
+
+        img.save(f"{OUT_DIR}/frame_{frame:04d}.png")
+
+    subprocess.run([
+        "ffmpeg","-y","-r",str(FPS),
+        "-i",f"{OUT_DIR}/frame_%04d.png",
+        "-c:v","prores_ks","-profile:v","4444",
+        "-pix_fmt","yuva444p10le", OUT_FILE
+    ], check=True, capture_output=True)
+    print(f"  → {OUT_FILE}")
+
+
+# ── Photography (1 ligne) ──
+generate([
+    [("Photography", FONT_REG), ("by", FONT_REG),
+     ("Guillaume",   FONT_REG), ("Jamar", FONT_REG)],
+], "Credit Photography.mov", seed=10)
+
+# ── Music (2 lignes : nom + titre en italique) ──
+generate([
+    [("Music",      FONT_REG), ("by", FONT_REG),
+     ("Guillaume",  FONT_REG), ("Ferran", FONT_REG)],
+    [("Prompt in F Minor", FONT_ITA)],   # titre traité comme 1 token
+], "Credit Music.mov", seed=11)

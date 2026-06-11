@@ -1,0 +1,161 @@
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import os, subprocess, random
+
+random.seed(7)
+
+W, H = 1920, 1080
+FPS = 24
+FONT_PATH  = "/Users/zenray/Library/Fonts/AnthropicSerif-Regular.ttf"
+OUT_DIR    = "/tmp/word_anim_seq"
+OUT_VIDEO  = "/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/Word Anim 1.mov"
+
+os.makedirs(OUT_DIR, exist_ok=True)
+for f in os.listdir(OUT_DIR): os.remove(f"{OUT_DIR}/{f}")
+
+font       = ImageFont.truetype(FONT_PATH, 90)
+GAP_W      = 28
+OFFSET_IN  = 150
+OFFSET_OUT = 100
+SHADOW_R   = 7   # drop shadow blur radius (centré, offset 0,0)
+
+# ─── Drop shadow helper ───────────────────────────────────────────────────────
+def draw_word(canvas, text, x, y, alpha):
+    """Dessine un mot avec drop shadow centré (offset 0,0, blur SHADOW_R)."""
+    if alpha <= 0:
+        return
+    bb  = font.getbbox(text)
+    pad = SHADOW_R * 2 + 4
+    lw  = bb[2] - bb[0] + pad * 2
+    lh  = bb[3] - bb[1] + pad * 2
+    lx  = pad - bb[0]
+    ly  = pad - bb[1]
+
+    tmp = Image.new("RGBA", (lw, lh), (0, 0, 0, 0))
+    ImageDraw.Draw(tmp).text((lx, ly), text, font=font, fill=(0, 0, 0, alpha))
+    shadow = tmp.filter(ImageFilter.GaussianBlur(SHADOW_R))
+    dx = x + bb[0] - pad
+    dy = y + bb[1] - pad
+    if dx >= 0 and dy >= 0:
+        canvas.alpha_composite(shadow, (dx, dy))
+
+    ImageDraw.Draw(canvas).text((x, y), text, font=font, fill=(255, 255, 255, alpha))
+
+# ─── Layout helpers ──────────────────────────────────────────────────────────
+def word_positions(words):
+    sizes = []
+    for w in words:
+        bb = font.getbbox(w)
+        sizes.append((bb[2]-bb[0], bb[3]-bb[1]))
+    total_w = sum(s[0] for s in sizes) + GAP_W*(len(sizes)-1)
+    x = (W - total_w) // 2
+    y = (H - sizes[0][1]) // 2
+    pos = []
+    for s in sizes:
+        pos.append((x, y))
+        x += s[0] + GAP_W
+    return pos, sizes
+
+def ease_out(t): return 1-(1-min(max(t,0),1))**4
+def ease_in(t):  return min(max(t,0),1)**3
+
+def start_offset(direction, fx, fy):
+    if direction == 'left':   return (fx - OFFSET_IN, fy)
+    if direction == 'right':  return (fx + OFFSET_IN, fy)
+    if direction == 'top':    return (fx, fy - OFFSET_IN)
+    if direction == 'bottom': return (fx, fy + OFFSET_IN)
+
+# ─── SECTION 1 : "Before you create" — 48 frames (2s) ───────────────────────
+S1_WORDS   = ["Before", "you", "create"]
+S1_DIRS    = ["left", "top", "right"]
+S1_DELAY   = 7
+S1_ENTRY_F = 9
+S1_EXIT_F  = 10
+S1_TOTAL   = 48
+S1_EXIT_START = S1_TOTAL - S1_EXIT_F  # 38
+
+# ─── GAP — 24 frames (1s) ────────────────────────────────────────────────────
+GAP_F = 24
+
+# ─── SECTION 2 : 3 phrases "you" — 72 frames (3s), 24f chacune ──────────────
+DIR_PAIRS = [('left','top'), ('right','bottom'), ('top','left')]
+random.shuffle(DIR_PAIRS)
+
+YOU_PHRASES   = ["you test,", "you shape,", "you break things."]
+S2_PER_F      = 24
+S2_ENTRY_F    = 7
+S2_EXIT_F     = 7
+S2_WORD_DELAY = 3
+S2_START      = S1_TOTAL + GAP_F   # 72
+
+TOTAL = S2_START + len(YOU_PHRASES) * S2_PER_F  # 144
+print(f"Total: {TOTAL} frames ({TOTAL/FPS:.1f}s)")
+
+for frame in range(TOTAL):
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    # ── SECTION 1 ──
+    if frame < S1_TOTAL:
+        pos, sizes = word_positions(S1_WORDS)
+        alpha = 255
+        dy = 0
+        e_out = frame - S1_EXIT_START
+        if e_out >= 0:
+            t_out = ease_in(min(e_out / S1_EXIT_F, 1.0))
+            alpha = int(255*(1-t_out))
+            dy    = int(-OFFSET_OUT*t_out)
+
+        if alpha > 0:
+            for i, word in enumerate(S1_WORDS):
+                fx, fy = pos[i]
+                elapsed = frame - i*S1_DELAY
+                if elapsed < 0: continue
+                t_in = ease_out(min(elapsed/S1_ENTRY_F, 1.0))
+                sx, sy = start_offset(S1_DIRS[i], fx, fy)
+                px = int(sx + (fx-sx)*t_in)
+                py = int(sy + (fy-sy)*t_in) + dy
+                draw_word(img, word, px, py, alpha)
+
+    # ── SECTION 2 ──
+    for pi, phrase in enumerate(YOU_PHRASES):
+        ph_start = S2_START + pi*S2_PER_F
+        ph_exit  = ph_start + S2_PER_F - S2_EXIT_F
+        elapsed_phrase = frame - ph_start
+        if elapsed_phrase < 0 or frame >= ph_start + S2_PER_F:
+            continue
+
+        words = phrase.split()
+        pos, sizes = word_positions(words)
+        pair = DIR_PAIRS[pi]
+
+        alpha = 255
+        dy = 0
+        e_out = frame - ph_exit
+        if e_out >= 0:
+            t_out = ease_in(min(e_out/S2_EXIT_F, 1.0))
+            alpha = int(255*(1-t_out))
+            dy    = int(-OFFSET_OUT*t_out)
+
+        if alpha <= 0: continue
+
+        for i, word in enumerate(words):
+            fx, fy = pos[i]
+            elapsed = elapsed_phrase - i*S2_WORD_DELAY
+            if elapsed < 0: continue
+            rng = random.Random(pi*100+i)
+            direction = rng.choice(pair)
+            t_in = ease_out(min(elapsed/S2_ENTRY_F, 1.0))
+            sx, sy = start_offset(direction, fx, fy)
+            px = int(sx + (fx-sx)*t_in)
+            py = int(sy + (fy-sy)*t_in) + dy
+            draw_word(img, word, px, py, alpha)
+
+    img.save(f"{OUT_DIR}/frame_{frame:04d}.png")
+
+print("Assembling ProRes 4444...")
+subprocess.run([
+    "ffmpeg", "-y", "-r", str(FPS),
+    "-i", f"{OUT_DIR}/frame_%04d.png",
+    "-c:v", "prores_ks", "-profile:v", "4444",
+    "-pix_fmt", "yuva444p10le", OUT_VIDEO
+], check=True, capture_output=True)
+print(f"Done → {OUT_VIDEO}")

@@ -1,0 +1,92 @@
+from PIL import Image, ImageFilter
+import os, subprocess
+import numpy as np
+
+BASE    = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/'
+OUT_DIR = '/tmp/cube_flip_frames'
+OUT     = BASE + 'TransitionNotionZenRayProgress.mov'
+
+W, H  = 1920, 1080
+FPS   = 24
+TOTAL = FPS * 2
+SIZE  = 600
+
+os.makedirs(OUT_DIR, exist_ok=True)
+for f in os.listdir(OUT_DIR): os.remove(f"{OUT_DIR}/{f}")
+
+subprocess.run(['rsvg-convert','-w',str(SIZE),'-h',str(SIZE), BASE+'Notion-logo.svg',  '-o','/tmp/img1.png'], check=True)
+subprocess.run(['rsvg-convert','-w',str(SIZE),'-h',str(SIZE), BASE+'ZenRay Block.svg', '-o','/tmp/img2.png'], check=True)
+
+def squircle_bg(size):
+    ys, xs = np.mgrid[0:size, 0:size]
+    dx = np.abs((xs - size//2) / (size//2))
+    dy = np.abs((ys - size//2) / (size//2))
+    alpha = np.where(dx**5 + dy**5 <= 1.0, 255, 0).astype(np.uint8)
+    bg = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+    bg.putalpha(Image.fromarray(alpha))
+    return bg
+
+def load(path):
+    img = Image.open(path).convert("RGBA")
+    img.thumbnail((SIZE, SIZE), Image.LANCZOS)
+    sq = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    sq.paste(img, ((SIZE-img.width)//2,(SIZE-img.height)//2), img)
+    # Fond squircle blanc derrière
+    bg = squircle_bg(SIZE)
+    result = Image.alpha_composite(bg, sq)
+    return result
+
+img1 = load('/tmp/img1.png')
+img2 = load('/tmp/img2.png')
+
+def smoothstep(t): return t*t*(3-2*t)
+
+MAX_ROT  = 18
+MAX_BLUR = 8
+
+for frame in range(TOTAL):
+    t  = frame / (TOTAL - 1)   # 0 → 1
+
+    # Alpha : overlap court au centre (20% de la durée)
+    OVERLAP = 0.15
+    a1 = max(0.0, min(1.0, (0.5 + OVERLAP - t) / (0.5 + OVERLAP)))
+    a2 = max(0.0, min(1.0, (t - (0.5 - OVERLAP)) / (0.5 + OVERLAP)))
+    a1 = smoothstep(a1)
+    a2 = smoothstep(a2)
+
+    canvas = Image.new("RGBA", (W, H), (0,0,0,0))
+
+    # IMG1
+    if a1 > 0.01:
+        rot1  = MAX_ROT * smoothstep(1-a1)
+        blur1 = MAX_BLUR * smoothstep(1-a1)
+        sz1   = int(SIZE * (1.0 + 0.06*(1-a1)))
+        i1 = img1.resize((sz1,sz1), Image.LANCZOS)
+        i1 = i1.rotate(-rot1, resample=Image.BICUBIC)
+        if blur1 > 0.4: i1 = i1.filter(ImageFilter.GaussianBlur(blur1))
+        r,g,b,a = i1.split()
+        a = a.point(lambda x: int(x * a1))
+        canvas.alpha_composite(Image.merge("RGBA",(r,g,b,a)), ((W-sz1)//2,(H-sz1)//2))
+
+    # IMG2
+    if a2 > 0.01:
+        rot2  = MAX_ROT * smoothstep(1-a2)
+        blur2 = MAX_BLUR * smoothstep(1-a2)
+        sz2   = int(SIZE * (1.0 - 0.06*(1-a2)))
+        i2 = img2.resize((sz2,sz2), Image.LANCZOS)
+        i2 = i2.rotate(rot2, resample=Image.BICUBIC)
+        if blur2 > 0.4: i2 = i2.filter(ImageFilter.GaussianBlur(blur2))
+        r,g,b,a = i2.split()
+        a = a.point(lambda x: int(x * a2))
+        canvas.alpha_composite(Image.merge("RGBA",(r,g,b,a)), ((W-sz2)//2,(H-sz2)//2))
+
+    canvas.save(f"{OUT_DIR}/frame_{frame:04d}.png")
+
+print("Assembling...")
+subprocess.run([
+    "ffmpeg","-y","-r",str(FPS),
+    "-i",f"{OUT_DIR}/frame_%04d.png",
+    "-c:v","prores_ks","-profile:v","4444",
+    "-pix_fmt","yuva444p10le", OUT
+], check=True, capture_output=True)
+print(f"Done → {OUT}")

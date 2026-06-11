@@ -1,0 +1,96 @@
+from PIL import Image
+import os, subprocess
+
+W, H  = 1920, 1080
+FPS   = 24
+TOTAL = FPS * 5   # 120 frames = 5s
+FADE  = 12        # 0.5s = 12 frames crossfade
+
+BASE = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/'
+OUT  = BASE + 'Notion Sequence.mov'
+FDIR = '/tmp/notion_seq_frames'
+os.makedirs(FDIR, exist_ok=True)
+for f in os.listdir(FDIR): os.remove(f"{FDIR}/{f}")
+
+# ── 1. Notion SVG → PNG 1080×1080 centré ─────────────────────────────────────
+subprocess.run(['rsvg-convert','-w','1080','-h','1080',
+                BASE+'Notion.svg','-o','/tmp/notion_logo.png'], check=True)
+_notion = Image.open('/tmp/notion_logo.png').convert("RGBA")
+notion_frame = Image.new("RGBA",(W,H),(0,0,0,0))
+notion_frame.alpha_composite(_notion, ((W-1080)//2, 0))
+
+# ── 2. N Rotate MOV → 48 frames ───────────────────────────────────────────────
+NDIR = '/tmp/nrot_seq'
+os.makedirs(NDIR, exist_ok=True)
+subprocess.run(['ffmpeg','-y','-i',BASE+'Notion N Rotate.mov',
+                '-vsync','0', f'{NDIR}/f_%04d.png'],
+               check=True, capture_output=True)
+nrot = [Image.open(f'{NDIR}/f_{i+1:04d}.png').convert("RGBA")
+        for i in range(48)]
+print(f"  N Rotate: {len(nrot)} frames")
+
+# ── 3. Images statiques centrées ──────────────────────────────────────────────
+def center(path):
+    img = Image.open(path).convert("RGBA")
+    r   = min(W/img.width, H/img.height)
+    nw,nh = int(img.width*r), int(img.height*r)
+    out = Image.new("RGBA",(W,H),(0,0,0,0))
+    out.alpha_composite(img.resize((nw,nh),Image.LANCZOS), ((W-nw)//2,(H-nh)//2))
+    return out
+
+img_c = center(BASE+'540be75f-2ae3-471a-ba0b-134b019db4f1.png')
+img_d = center(BASE+'2d8f29f5_transparent.png')
+
+# ── Timeline : 4 segments, boundaries en frames ───────────────────────────────
+# [0,24) = Notion logo (1s)
+# [24,72) = N Rotate (2s)
+# [72,96) = ZenRay Block (1s)
+# [96,120) = App icon (1s)
+BOUNDS  = [0, 24, 72, 96, 120]
+SOURCES = [
+    [notion_frame],   # statique → liste 1 élément
+    nrot,             # 48 frames vidéo
+    [img_c],
+    [img_d],
+]
+
+def seg_alpha(f, i):
+    """Alpha du segment i au frame f — crossfade centré aux boundaries."""
+    s, e = BOUNDS[i], BOUNDS[i+1]
+    first, last = (i == 0), (i == len(SOURCES)-1)
+    # fade-in : distance depuis (s - FADE//2), sauf premier segment (depuis s)
+    d_in  = (f - s) if first else (f - (s - FADE//2))
+    # fade-out : distance jusqu'à (e + FADE//2), sauf dernier (jusqu'à e)
+    d_out = FADE * 10 if last else ((e + FADE//2) - f)  # pas de fade-out sur le dernier
+    return max(0.0, min(d_in/FADE, d_out/FADE, 1.0))
+
+def seg_frame(f, i):
+    s   = BOUNDS[i]
+    src = SOURCES[i]
+    idx = max(0, min(f - s, len(src)-1))
+    return src[idx]
+
+def apply_alpha(img, alpha):
+    if alpha >= 1.0: return img
+    r,g,b,a = img.split()
+    a = a.point(lambda x: int(x*alpha))
+    return Image.merge("RGBA",(r,g,b,a))
+
+# ── Render ────────────────────────────────────────────────────────────────────
+print("Rendering frames...")
+for frame in range(TOTAL):
+    canvas = Image.new("RGBA",(W,H),(0,0,0,0))
+    for i in range(len(SOURCES)):
+        a = seg_alpha(frame, i)
+        if a <= 0: continue
+        canvas.alpha_composite(apply_alpha(seg_frame(frame, i), a))
+    canvas.save(f"{FDIR}/frame_{frame:04d}.png")
+
+print("Assembling ProRes 4444...")
+subprocess.run([
+    'ffmpeg','-y','-r',str(FPS),
+    '-i',f'{FDIR}/frame_%04d.png',
+    '-c:v','prores_ks','-profile:v','4444',
+    '-pix_fmt','yuva444p10le', OUT
+], check=True, capture_output=True)
+print(f"Done → {OUT}  (5s @ {FPS}fps)")

@@ -1,0 +1,189 @@
+from PIL import Image, ImageDraw, ImageFont
+import os, subprocess, random
+
+BASE_OUT = "/Users/zenray/Create/Build/Productions/VideoZenRayProgress/"
+W, H  = 1920, 1080
+FPS   = 24
+TARGET = FPS * 2   # 48 frames = exactement 2.0s
+
+FONT_REG = "/Users/zenray/Library/Fonts/AnthropicSerif-Regular.ttf"
+FONT_ITA = "/Users/zenray/Library/Fonts/AnthropicSerif-Italic.ttf"
+
+WHITE = (255, 255, 255)
+DIM   = (175, 175, 175)
+
+GAP_W    = 22   # px entre mots sur la même ligne
+LINE_GAP = 20   # px entre ligne 1 et ligne 2
+
+WORD_DELAY = 3
+ANIM_F     = 8
+LINE_PAUSE = 3
+EXIT_DELAY = 1
+EXIT_F     = 6
+OFFSET_IN  = 110
+OFFSET_OUT = 60
+
+def eo(t): return max(0.0, min(1.0, 1-(1-t)**4))
+def ei(t): return max(0.0, min(1.0, t**3))
+
+def generate(lines_spec, out_name, seed=1):
+    """
+    lines_spec: list of lines, each line = list of (text, font_path, font_size, color)
+    Exactly 2 lines, produces exactly TARGET frames.
+    """
+    random.seed(seed)
+    OUT_DIR  = f"/tmp/cred_{seed}"
+    OUT_FILE = BASE_OUT + out_name
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for f in os.listdir(OUT_DIR): os.remove(f"{OUT_DIR}/{f}")
+
+    # ─── Font cache ───
+    fc = {}
+    def gf(path, sz):
+        k = (path, sz)
+        if k not in fc:
+            fc[k] = ImageFont.truetype(path, sz)
+        return fc[k]
+
+    # ─── Measure heights using consistent reference glyph ───
+    line_heights = []
+    for line in lines_spec:
+        h = 0
+        for _, fp, sz, _ in line:
+            f = gf(fp, sz)
+            bb = f.getbbox("AÉGY")
+            h = max(h, bb[3] - bb[1])
+        line_heights.append(h)
+
+    total_h = sum(line_heights) + LINE_GAP * (len(lines_spec) - 1)
+    y0 = (H - total_h) // 2
+
+    # ─── Build word layout ───
+    line_data = []
+    y = y0
+    for li, line in enumerate(lines_spec):
+        fonts_l = [gf(fp, sz) for _, fp, sz, _ in line]
+        wws = []
+        for i, (t, fp, sz, _) in enumerate(line):
+            bb = fonts_l[i].getbbox(t)
+            wws.append(bb[2] - bb[0])
+        total_w = sum(wws) + GAP_W * (len(line) - 1)
+        x = (W - total_w) // 2
+        words = []
+        for i, (t, fp, sz, col) in enumerate(line):
+            f = fonts_l[i]
+            bb = f.getbbox(t)
+            wh = bb[3] - bb[1]
+            # Baseline-align: bottom of text aligned to bottom of line
+            wy = y + line_heights[li] - wh
+            words.append({'text': t, 'font': f, 'color': col,
+                          'x': x, 'y': wy, 'w': wws[i]})
+            x += wws[i] + GAP_W
+        line_data.append(words)
+        y += line_heights[li] + LINE_GAP
+
+    flat  = [w for line in line_data for w in line]
+    n     = len(flat)
+
+    # ─── Timing ───
+    line_starts = []
+    t = 0
+    for words in line_data:
+        line_starts.append(t)
+        t += (len(words) - 1) * WORD_DELAY + ANIM_F + LINE_PAUSE
+
+    last_li        = len(line_data) - 1
+    line_last_done = (line_starts[last_li]
+                      + (len(line_data[last_li]) - 1) * WORD_DELAY
+                      + ANIM_F)
+    exit_tail  = (n - 1) * EXIT_DELAY + EXIT_F
+    HOLD_F     = max(TARGET - line_last_done - exit_tail, 2)
+    all_done   = line_last_done + HOLD_F
+    TOTAL      = all_done + (n - 1) * EXIT_DELAY + EXIT_F
+
+    print(f"  {out_name}: {TOTAL} frames = {TOTAL/FPS:.2f}s  (hold={HOLD_F})")
+
+    # ─── Entry directions ───
+    DIRS = ['left', 'right', 'top']
+    dirs = [[random.choice(DIRS) for _ in line] for line in line_data]
+
+    # ─── Render ───
+    for frame in range(TOTAL):
+        img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        eidx = 0
+        for li, words in enumerate(line_data):
+            ls = line_starts[li]
+            for wi, word in enumerate(words):
+                fx, fy = word['x'], word['y']
+                e_in   = frame - (ls + wi * WORD_DELAY)
+
+                if e_in < 0:
+                    eidx += 1
+                    continue
+
+                # Entry
+                if e_in >= ANIM_F:
+                    px, py = fx, fy
+                    alpha  = 255
+                else:
+                    t_in  = eo(e_in / ANIM_F)
+                    d     = dirs[li][wi]
+                    ox = -OFFSET_IN if d == 'left' else (OFFSET_IN if d == 'right' else 0)
+                    oy = -OFFSET_IN if d == 'top'  else (OFFSET_IN if d == 'bottom' else 0)
+                    px    = int(fx + ox * (1 - t_in))
+                    py    = int(fy + oy * (1 - t_in))
+                    alpha = int(255 * t_in)
+
+                # Exit (overrides alpha)
+                e_out = frame - (all_done + eidx * EXIT_DELAY)
+                dy    = 0
+                if e_out >= 0:
+                    t_out = ei(min(e_out / EXIT_F, 1.0))
+                    alpha = int(255 * (1 - t_out))
+                    dy    = int(-OFFSET_OUT * t_out)
+
+                if alpha > 0:
+                    r, g, b = word['color']
+                    draw.text((px, py + dy), word['text'],
+                              font=word['font'], fill=(r, g, b, alpha))
+                eidx += 1
+
+        img.save(f"{OUT_DIR}/frame_{frame:04d}.png")
+
+    subprocess.run([
+        "ffmpeg", "-y", "-r", str(FPS),
+        "-i", f"{OUT_DIR}/frame_%04d.png",
+        "-c:v", "prores_ks", "-profile:v", "4444",
+        "-pix_fmt", "yuva444p10le", OUT_FILE
+    ], check=True, capture_output=True)
+    print(f"  → {OUT_FILE}")
+
+
+# ───────────────────────────────────────────────
+SZ1 = 60   # ligne catégorie
+SZ2 = 86   # ligne nom
+
+# Credit 1 — Music
+generate([
+    [("Music", FONT_REG, SZ1, DIM),
+     ('“Prompt in F Minor”', FONT_ITA, SZ1, DIM)],
+    [("GUILLAUME", FONT_REG, SZ2, WHITE),
+     ("FERRAN",    FONT_REG, SZ2, WHITE)],
+], "Credit Music.mov", seed=1)
+
+# Credit 2 — Photography
+generate([
+    [("Asset",       FONT_REG, SZ1, DIM),
+     ("Photography", FONT_REG, SZ1, DIM)],
+    [("GUILLAUME", FONT_REG, SZ2, WHITE),
+     ("JAMAR",     FONT_REG, SZ2, WHITE)],
+], "Credit Photography.mov", seed=2)
+
+# Credit 3 — Realisation
+generate([
+    [("Réalisation", FONT_REG, SZ1, DIM)],
+    [("MATTHIEU", FONT_REG, SZ2, WHITE),
+     ("HUGUET",   FONT_REG, SZ2, WHITE)],
+], "Credit Realisation.mov", seed=3)

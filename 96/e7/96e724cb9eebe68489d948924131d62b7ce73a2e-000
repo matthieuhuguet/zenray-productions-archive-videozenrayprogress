@@ -1,0 +1,46 @@
+from PIL import Image
+import numpy as np
+import os, subprocess
+
+SRC = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/2d8f29f5_transparent.png'
+OUT_DIR = '/tmp/pulse_frames'
+OUT = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/ZenRay Logo Pulse.mov'
+
+W, H = 1920, 1080
+FPS = 60
+DURATION = 2
+TOTAL = FPS * DURATION
+
+ICON_SIZE = int(H * 2/3)   # 720px
+SCALE_MAX = 0.14
+FREQ = 3.0
+
+os.makedirs(OUT_DIR, exist_ok=True)
+for f in os.listdir(OUT_DIR): os.remove(f"{OUT_DIR}/{f}")
+
+# Pre-render à la taille MAX pour toujours downscaler (+ lisse)
+max_size = int(ICON_SIZE * (1 + SCALE_MAX)) + 2
+icon_large = Image.open(SRC).convert("RGBA").resize((max_size, max_size), Image.LANCZOS)
+
+for frame in range(TOTAL):
+    t = frame / FPS
+    raw   = np.sin(2 * np.pi * FREQ * t)
+    pulse = max(0.0, raw) ** 2
+    scale = 1.0 + SCALE_MAX * pulse
+
+    sz = int(ICON_SIZE * scale)
+    # Toujours downscale depuis max_size → lisse
+    icon = icon_large.resize((sz, sz), Image.LANCZOS)
+
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    canvas.paste(icon, ((W-sz)//2, (H-sz)//2), icon)
+    canvas.save(f"{OUT_DIR}/frame_{frame:04d}.png")
+
+print(f"Frames done ({TOTAL/FPS:.1f}s @ {FPS}fps). Assembling...")
+subprocess.run([
+    "ffmpeg", "-y", "-r", str(FPS),
+    "-i", f"{OUT_DIR}/frame_%04d.png",
+    "-c:v", "prores_ks", "-profile:v", "4444",
+    "-pix_fmt", "yuva444p10le", OUT
+], check=True, capture_output=True)
+print(f"Done → {OUT}")

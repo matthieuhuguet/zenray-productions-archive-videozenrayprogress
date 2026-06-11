@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Génère un HLS adaptatif (360p / 720p / 1080p / 2160p) depuis la source 4K.
+# Sortie : hls/master.m3u8 + variantes vN/ avec segments .ts de 4s.
+set -euo pipefail
+SRC="${1:-ZenRayProgress002.mov}"
+OUT="${2:-hls}"
+# Ne pas effacer un éventuel .git du repo HLS : on ne nettoie que les médias.
+mkdir -p "$OUT"
+find "$OUT" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+
+ffmpeg -y -i "$SRC" \
+  -filter_complex "[0:v]split=4[v1][v2][v3][v4]; \
+    [v1]scale=w=640:h=-2[v1out]; \
+    [v2]scale=w=1280:h=-2[v2out]; \
+    [v3]scale=w=1920:h=-2[v3out]; \
+    [v4]scale=w=3840:h=-2[v4out]" \
+  -map "[v1out]" -c:v:0 libx264 -preset slow -crf 26 -maxrate:v:0 1000k -bufsize:v:0 2000k \
+  -map "[v2out]" -c:v:1 libx264 -preset slow -crf 24 -maxrate:v:1 3000k -bufsize:v:1 6000k \
+  -map "[v3out]" -c:v:2 libx264 -preset slow -crf 23 -maxrate:v:2 6000k -bufsize:v:2 12000k \
+  -map "[v4out]" -c:v:3 libx264 -preset slow -crf 22 -maxrate:v:3 18000k -bufsize:v:3 36000k \
+  -map a:0 -map a:0 -map a:0 -map a:0 -c:a aac -b:a 128k -ac 2 \
+  -threads 16 \
+  -pix_fmt yuv420p -profile:v high -g 48 -keyint_min 48 -sc_threshold 0 \
+  -f hls -hls_time 2 -hls_playlist_type vod -hls_flags independent_segments \
+  -hls_segment_type mpegts \
+  -hls_segment_filename "$OUT/v%v/seg_%03d.ts" \
+  -master_pl_name "master.m3u8" \
+  -var_stream_map "v:0,a:0,name:360p v:1,a:1,name:720p v:2,a:2,name:1080p v:3,a:3,name:2160p" \
+  "$OUT/v%v/stream.m3u8"
+
+echo "HLS généré dans $OUT/"
+find "$OUT" -name "*.m3u8" | sort
+du -sh "$OUT"

@@ -1,0 +1,214 @@
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import numpy as np, os, subprocess, random, re, base64
+
+random.seed(42)
+
+SVG    = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/thumbnail.svg'
+PULSE  = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/ZenRay Logo Pulse.mov'
+OUT    = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/ZenRay Logo Pulse.mov'
+FDIR   = '/tmp/zr_frames'
+PDIR   = '/tmp/zr_pulse'
+
+W, H   = 1920, 1080
+FPS    = 60
+SCALE  = 1.5
+SHADOW = 7
+HALF   = FPS        # 60 frames = 1s chaque moitié
+
+os.makedirs(FDIR, exist_ok=True)
+os.makedirs(PDIR, exist_ok=True)
+for f in os.listdir(FDIR): os.remove(f"{FDIR}/{f}")
+for f in os.listdir(PDIR): os.remove(f"{PDIR}/{f}")
+
+# ── Extraire fonts & image depuis SVG ────────────────────────────────────────
+print("Extracting SVG assets...")
+with open(SVG) as f:
+    svg_content = f.read()
+
+font_paths = {}
+for block in re.findall(r'@font-face\s*\{([^}]+)\}', svg_content):
+    nm = re.search(r"font-family:'([^']+)'", block)
+    dt = re.search(r"base64,([A-Za-z0-9+/=\n\r\t ]+)", block)
+    if nm and dt:
+        name = nm.group(1)
+        data = re.sub(r'\s','', dt.group(1))
+        path = f'/tmp/font_{name}.ttf'
+        with open(path,'wb') as ff:
+            ff.write(base64.b64decode(data + '=='*2))
+        font_paths[name] = path
+        print(f"  font: {name}")
+
+# Image embedded
+img_m = re.search(r'<image[^>]*href="data:image/png;base64,([^"]+)"[^>]*x="(\d+)"[^>]*y="(\d+)"[^>]*width="(\d+)"[^>]*height="(\d+)"', svg_content)
+if not img_m:
+    img_m = re.search(r'<image[^>]*x="(\d+)"[^>]*y="(\d+)"[^>]*width="(\d+)"[^>]*height="(\d+)"[^>]*href="data:image/png;base64,([^"]+)"', svg_content)
+    if img_m:
+        ix,iy,iw,ih,idata = img_m.group(1,2,3,4,5)
+    else:
+        ix=iy=iw=ih=None; idata=None
+else:
+    idata,ix,iy,iw,ih = img_m.group(1,2,3,4,5)
+
+emb_img = None
+if idata:
+    raw = re.sub(r'\s','', idata)
+    with open('/tmp/svg_emb.png','wb') as ff:
+        ff.write(base64.b64decode(raw + '=='*2))
+    emb_img = Image.open('/tmp/svg_emb.png').convert("RGBA")
+    ix,iy,iw,ih = int(ix)*SCALE, int(iy)*SCALE, int(iw)*SCALE, int(ih)*SCALE
+    emb_img = emb_img.resize((int(iw), int(ih)), Image.LANCZOS)
+    print(f"  image: {emb_img.size} at ({ix},{iy})")
+
+# ── Couche statique bg+icon via rsvg (alignement pixel-perfect) ──────────────
+with open(SVG) as f:
+    svg_content2 = f.read()
+no_text_svg = re.sub(r'<text[^>]*>.*?</text>', '', svg_content2, flags=re.DOTALL)
+with open('/tmp/thumb_notxt.svg','w') as f:
+    f.write(no_text_svg)
+subprocess.run(['rsvg-convert','-w',str(W),'-h',str(H),
+                '/tmp/thumb_notxt.svg','-o','/tmp/thumb_notxt.png'], check=True)
+BG_LAYER = Image.open('/tmp/thumb_notxt.png').convert("RGBA")
+print(f"  bg layer: {BG_LAYER.size}")
+
+def make_bg(alpha=255):
+    bg = BG_LAYER.copy()
+    if alpha < 255:
+        r,g,b,a = bg.split()
+        a = a.point(lambda x: x*alpha//255)
+        bg = Image.merge("RGBA",(r,g,b,a))
+    return bg
+
+# ── Texte : positions caractère par caractère ─────────────────────────────────
+ELEMS = [
+    {'text':'ZenRayProgress','x':294*SCALE,'y':248*SCALE,
+     'font':font_paths['ARMed'],   'size':int(112*SCALE),'spacing':-1*SCALE},
+    {'text':'Every files,',  'x':150*SCALE,'y':430*SCALE,
+     'font':font_paths['ARXBold'], 'size':int(112*SCALE),'spacing':-2*SCALE},
+    {'text':'in a tab.',     'x':150*SCALE,'y':612*SCALE,
+     'font':font_paths['ARSerif'], 'size':int(112*SCALE),'spacing':-1*SCALE},
+]
+
+all_chars = []
+for elem in ELEMS:
+    font = ImageFont.truetype(elem['font'], elem['size'])
+    x = elem['x']
+    for ch in elem['text']:
+        # advance width via getlength (plus précis que getbbox pour le spacing)
+        adv = font.getlength(ch)
+        all_chars.append({'ch':ch,'x':x,'y':elem['y'],'font':font})
+        x += adv + elem['spacing']
+
+# Retirer espaces de la liste de révélation (invisibles)
+reveal_chars = [c for c in all_chars if c['ch'].strip()]
+print(f"  chars to reveal: {len(reveal_chars)}")
+
+# ── Ordre aléatoire de révélation ─────────────────────────────────────────────
+random.shuffle(reveal_chars)
+SPREAD  = HALF - 15        # frames d'étalement (0→45)
+START_F = 5                # première lettre à la frame 5 de la 2e moitié
+
+def reveal_start(rank, n):
+    return START_F + int(rank/(n-1) * SPREAD)
+
+char_starts = {id(c): reveal_start(i, len(reveal_chars))
+               for i,c in enumerate(reveal_chars)}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def ss(t): return max(0.0, min(1.0, t*t*(3-2*t)))
+
+def draw_char(canvas, ch, cx, cy, font, alpha, scale=1.0):
+    """cx,cy = left-baseline (SVG convention : y = baseline)."""
+    if alpha <= 0 or not ch.strip(): return
+    # getbbox avec anchor ls : coordonnées relatives à la baseline gauche
+    bb = font.getbbox(ch, anchor="ls")   # (l, top_neg, r, bottom_pos)
+    if bb[2] - bb[0] <= 0: return
+    pad = SHADOW*2+4
+    lw  = bb[2]-bb[0]+pad*2
+    lh  = bb[3]-bb[1]+pad*2
+    if lw<=0 or lh<=0: return
+    # Dans l'image locale : la baseline est à y = pad - bb[1]
+    lx, ly = pad - bb[0], pad - bb[1]
+    nat = Image.new("RGBA",(lw,lh),(0,0,0,0))
+    ImageDraw.Draw(nat).text((lx,ly), ch, font=font, fill=(0,0,0,alpha), anchor="ls")
+    shd = nat.filter(ImageFilter.GaussianBlur(SHADOW))
+    txt = Image.new("RGBA", nat.size, (0,0,0,0))
+    ImageDraw.Draw(txt).text((lx,ly), ch, font=font, fill=(255,255,255,alpha), anchor="ls")
+    combined = Image.alpha_composite(shd, txt)
+    if scale != 1.0:
+        nw = max(1, int(combined.width*scale))
+        nh = max(1, int(combined.height*scale))
+        combined = combined.resize((nw, nh), Image.LANCZOS)
+        ox = (combined.width  - lw)//2
+        oy = (combined.height - lh)//2
+    else:
+        ox = oy = 0
+    # Coordonnées canvas : cx+bb[0]-pad = left edge de l'image locale sur le canvas
+    dx = int(cx + bb[0] - pad - ox)
+    dy = int(cy + bb[1] - pad - oy)   # bb[1] négatif → monte au-dessus de la baseline
+    cx2,cy2 = max(0,dx), max(0,dy)
+    cr = combined.crop((cx2-dx, cy2-dy,
+                        min(combined.width, W-dx),
+                        min(combined.height, H-dy)))
+    if cr.width>0 and cr.height>0:
+        canvas.alpha_composite(cr, (cx2, cy2))
+
+POP_F = 6   # frames d'animation par lettre
+
+def char_at(frame_in_half, ch):
+    """Retourne (alpha, scale) pour un caractère à une frame donnée."""
+    start = char_starts.get(id(ch))
+    if start is None:  # espace = toujours skip
+        return 0, 1.0
+    e = frame_in_half - start
+    if e < 0:
+        return 0, 1.0
+    t = min(e / POP_F, 1.0)
+    # Bounce : 0→1.18→0.94→1.0
+    if   t < 0.45: sc = ss(t/0.45) * 1.18
+    elif t < 0.72: sc = 1.18 - ss((t-0.45)/0.27)*0.24
+    else:          sc = 0.94 + ss((t-0.72)/0.28)*0.06
+    alpha = int(min(255, t*255*2))
+    return alpha, sc
+
+# ── 1. Extraire 60 premières frames du pulse ──────────────────────────────────
+print("Extracting pulse frames...")
+subprocess.run([
+    'ffmpeg','-y','-i',PULSE,'-frames:v',str(HALF),
+    '-vsync','0', f'{PDIR}/frame_%04d.png'
+], check=True, capture_output=True)
+pulse_frames = sorted(os.listdir(PDIR))[:HALF]
+print(f"  {len(pulse_frames)} frames")
+
+for i, pf in enumerate(pulse_frames):
+    src = Image.open(f"{PDIR}/{pf}").convert("RGBA")
+    if src.size != (W,H): src = src.resize((W,H), Image.LANCZOS)
+    src.save(f"{FDIR}/frame_{i:04d}.png")
+
+# ── 2. Générer 2e moitié : révélation complète du SVG ────────────────────────
+print("Rendering reveal frames...")
+BG_FADEIN = 15    # frames pour fade-in du background
+IMG_START  = 8    # frame d'apparition de l'image
+
+for fi in range(HALF):
+    # Background
+    bg_alpha = int(min(255, fi/BG_FADEIN*255))
+    canvas   = make_bg(bg_alpha)
+
+    # Image embedded : gérée par rsvg dans BG_LAYER → rien à faire ici
+
+    # Lettres
+    for ch in reveal_chars:
+        alpha, scale = char_at(fi, ch)
+        draw_char(canvas, ch['ch'], ch['x'], ch['y'], ch['font'], alpha, scale)
+
+    canvas.save(f"{FDIR}/frame_{HALF+fi:04d}.png")
+
+# ── 3. Assembler ─────────────────────────────────────────────────────────────
+print("Assembling ProRes 4444...")
+subprocess.run([
+    'ffmpeg','-y','-r',str(FPS),
+    '-i',f'{FDIR}/frame_%04d.png',
+    '-c:v','prores_ks','-profile:v','4444',
+    '-pix_fmt','yuva444p10le', OUT
+], check=True, capture_output=True)
+print(f"Done → {OUT}  ({2*HALF/FPS:.1f}s @ {FPS}fps)")

@@ -1,0 +1,169 @@
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np, os, subprocess, random
+
+W, H   = 1920, 1080
+FPS    = 24
+TOTAL  = FPS * 2   # 48 frames
+
+OUT_DIR = '/tmp/glitch_frames'
+OUT     = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/Glitch Effect.mov'
+FL      = '/Users/zenray/Library/Fonts/'
+
+os.makedirs(OUT_DIR, exist_ok=True)
+for f in os.listdir(OUT_DIR): os.remove(f"{OUT_DIR}/{f}")
+
+# ── Fonts ─────────────────────────────────────────────────────────────────────
+F_HUGE  = ImageFont.truetype(FL+'AnthropicSerif-Medium.ttf',   360)
+F_BIG   = ImageFont.truetype(FL+'AnthropicSerif-Regular.ttf',  180)
+F_MED   = ImageFont.truetype(FL+'AnthropicSerif-Light.ttf',     80)
+F_CODE  = ImageFont.truetype(FL+'AnthropicMono-Regular.ttf',    34)
+F_SMALL = ImageFont.truetype(FL+'AnthropicMono-Light.ttf',      22)
+
+# ── Contenu textuel ───────────────────────────────────────────────────────────
+HUGE_WORDS = [
+    'New York City', 'Tokyo', 'Berlin', 'São Paulo',
+    'Hong Kong', 'Paris', 'Lagos', 'Montréal',
+]
+BIG_WORDS = [
+    '7.07.2024', '23:47:11', '(00:45:33)', '3.14159',
+    '2.71828', '48°51′N', '40.7128°N', '51.5074°N',
+    'Im Höllental.', 'es Wort"', 'ch was.', '— sser',
+    'CTR 3.2%', 'CONV 0.87%', 'REACH 142K', 'AVG 2:47',
+    '74.0060°W', '2°21′E', '0.1278°W', '139.6917°E',
+]
+CODE_LINES = [
+    '∑(x² + y²) = r²',
+    'f(x) = e^(−x²/2σ²)',
+    '∇²φ = ρ / ε₀',
+    'dx/dt = −λx',
+    '∫₀^∞ e^(−t) dt = 1',
+    'P(A|B) = P(B|A)·P(A) / P(B)',
+    'σ = √(Σ(xi−μ)² / N)',
+    'CTR = clicks / impressions',
+    'CPC = spend / clicks',
+    'ROAS = revenue / ad_spend',
+    'LTV = ARPU × avg_lifetime',
+    '48°51′24″N 2°21′03″E',
+    '40°42′46″N 74°00′22″W',
+    'LOC: 35.6762° N, 139.6503° E',
+    'REF: 2024.07.02 — 23:47',
+    'SESSION ID: f3a7-0091',
+    'EXPOSURE: 1/250s f/1.8',
+]
+
+# ── Palettes ───────────────────────────────────────────────────────────────────
+WHITE   = (240, 240, 240)
+RED     = (195,  91,  83)   # #c35b53
+DARKRED = (130,  25,  20)
+BLACK   = ( 10,  10,  10)
+COLORS  = [RED, RED, WHITE, BLACK, DARKRED]
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def rotated_text(word, font, color, alpha, angle):
+    """Rend un mot dans un calque RGBA, tourné autour de son centre."""
+    tmp = Image.new("RGBA", (W, H), (0,0,0,0))
+    bb  = font.getbbox(word)
+    cx  = (W - (bb[2]-bb[0])) // 2
+    cy  = (H - (bb[3]-bb[1])) // 2
+    ImageDraw.Draw(tmp).text((cx, cy), word, font=font, fill=(*color, alpha))
+    return tmp.rotate(angle, resample=Image.BICUBIC)
+
+def draw_frame(seed):
+    rng = random.Random(seed)
+    img = Image.new("RGBA", (W, H), (0,0,0,0))
+    draw = ImageDraw.Draw(img)
+
+    # ── 1. Scan lines horizontales ────────────────────────────────────────────
+    for _ in range(rng.randint(3, 12)):
+        y   = rng.randint(0, H)
+        h   = rng.randint(1, 10)
+        col = rng.choice(COLORS)
+        alp = rng.randint(30, 130)
+        draw.rectangle([0, y, W, y+h], fill=(*col, alp))
+
+    # ── 2. Blocs géométriques ─────────────────────────────────────────────────
+    for _ in range(rng.randint(2, 7)):
+        x1  = rng.randint(0, W-20)
+        y1  = rng.randint(0, H-20)
+        x2  = x1 + rng.randint(10, 400)
+        y2  = y1 + rng.randint(2, 60)
+        col = rng.choice(COLORS)
+        alp = rng.randint(20, 90)
+        draw.rectangle([x1, y1, x2, y2], fill=(*col, alp))
+
+    # ── 3. Barcodes ───────────────────────────────────────────────────────────
+    for _ in range(rng.randint(0, 3)):
+        bx  = rng.randint(0, W-250)
+        by  = rng.randint(0, H-180)
+        bh  = rng.randint(60, 180)
+        col = rng.choice([WHITE, RED])
+        alp = rng.randint(80, 200)
+        for _ in range(rng.randint(6, 22)):
+            lx = bx + rng.randint(0, 200)
+            lw = rng.randint(2, 14)
+            draw.rectangle([lx, by, lx+lw, by+bh], fill=(*col, alp))
+
+    # ── 4. Texte CODE (petites lignes) ────────────────────────────────────────
+    for _ in range(rng.randint(2, 6)):
+        cx  = rng.randint(0, W-600)
+        cy  = rng.randint(0, H-200)
+        col = rng.choice(COLORS)
+        alp = rng.randint(100, 220)
+        for i in range(rng.randint(1, 6)):
+            line = rng.choice(CODE_LINES)
+            draw.text((cx, cy+i*38), line, font=rng.choice([F_CODE, F_SMALL]),
+                      fill=(*col, alp))
+
+    # ── 5. Mots BIG ───────────────────────────────────────────────────────────
+    for _ in range(rng.randint(2, 5)):
+        word = rng.choice(BIG_WORDS)
+        x    = rng.randint(-50, W-300)
+        y    = rng.randint(-20, H-100)
+        col  = rng.choice(COLORS)
+        alp  = rng.randint(80, 230)
+        draw.text((x, y), word, font=F_MED, fill=(*col, alp))
+
+    # ── 6. Mot HUGE tourné ────────────────────────────────────────────────────
+    if rng.random() < 0.65:
+        word  = rng.choice(HUGE_WORDS)
+        angle = rng.choice([0, 0, 90, -90, rng.randint(-20, 20)])
+        col   = rng.choice([WHITE, RED, DARKRED])
+        alp   = rng.randint(40, 160)
+        layer = rotated_text(word, rng.choice([F_HUGE, F_BIG]), col, alp, angle)
+        # Décaler aléatoirement
+        dx = rng.randint(-400, 400)
+        dy = rng.randint(-300, 300)
+        img.alpha_composite(layer, (max(0,dx), max(0,dy)) if dx>=0 and dy>=0
+                            else (0,0))
+
+    # ── 7. Aberration : décalage rouge/noir ──────────────────────────────────
+    if rng.random() < 0.45:
+        shift = rng.randint(3, 18)
+        arr   = np.array(img)
+        ghost = np.zeros_like(arr)
+        ghost[:, shift:, 0] = arr[:, :-shift, 0]
+        ghost[:, shift:, 3] = (arr[:, :-shift, 3] * 0.35).astype(np.uint8)
+        img.alpha_composite(Image.fromarray(ghost, 'RGBA'))
+
+    # ── 8. Flash rouge ou noir ────────────────────────────────────────────────
+    if rng.random() < 0.12:
+        col = rng.choice([RED, BLACK])
+        alp = rng.randint(8, 30)
+        draw.rectangle([0, 0, W, H], fill=(*col, alp))
+
+    return img
+
+# ── Render ────────────────────────────────────────────────────────────────────
+rng_main = random.Random(42)
+for frame in range(TOTAL):
+    seed = rng_main.randint(0, 2**31)
+    draw_frame(seed).save(f"{OUT_DIR}/frame_{frame:04d}.png")
+
+print(f"Frames: {TOTAL} ({TOTAL/FPS:.1f}s)")
+subprocess.run([
+    'ffmpeg','-y','-r',str(FPS),
+    '-i',f'{OUT_DIR}/frame_%04d.png',
+    '-c:v','prores_ks','-profile:v','4444',
+    '-pix_fmt','yuva444p10le', OUT
+], check=True, capture_output=True)
+print(f"Done → {OUT}")

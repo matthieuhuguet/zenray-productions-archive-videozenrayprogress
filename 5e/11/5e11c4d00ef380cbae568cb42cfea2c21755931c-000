@@ -1,0 +1,77 @@
+from PIL import Image
+import numpy as np, os, subprocess
+
+BASE  = '/Users/zenray/Create/Build/Productions/VideoZenRayProgress/Frames_ZenRayProgress/'
+OUT   = BASE + 'Notion N Rotate.mov'
+FDIR  = '/tmp/notion_n_frames'
+
+W, H  = 1920, 1080
+FPS   = 24
+TOTAL = FPS * 2   # 2 secondes = 48 frames
+
+os.makedirs(FDIR, exist_ok=True)
+for f in os.listdir(FDIR): os.remove(f"{FDIR}/{f}")
+
+# ── Rendre le N à haute résolution via rsvg ───────────────────────────────────
+N_SIZE = 700   # taille du canvas SVG → N occupe ~450px visible
+N_PATH = ('M79.403 33.473 c0.387 1.75 0 3.5 -1.75 3.7 l-2.91 0.577 v42.773 '
+          'c-2.527 1.36 -4.853 2.137 -6.797 2.137 c-3.107 0 -3.883 -0.973 '
+          '-6.21 -3.887 l-19.03 -29.94 v28.967 l6.02 1.363 s0 3.5 -4.857 3.5 '
+          'l-13.39 0.777 c-0.39 -0.78 0 -2.723 1.357 -3.11 l3.497 -0.97 '
+          'v-38.3 L30.48 40.667 c-0.39 -1.75 0.58 -4.277 3.3 -4.473 '
+          'l14.367 -0.967 19.8 30.327 v-26.83 l-5.047 -0.58 '
+          'c-0.39 -2.143 1.163 -3.7 3.103 -3.89 l13.4 -0.78z')
+
+svg = f'''<svg width="{N_SIZE}" height="{N_SIZE}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="{N_PATH}" fill="white"/>
+</svg>'''
+
+with open('/tmp/n_hires.svg', 'w') as f:
+    f.write(svg)
+subprocess.run(['rsvg-convert', '/tmp/n_hires.svg', '-o', '/tmp/n_hires.png'],
+               check=True)
+
+# Charger et recadrer sur le N visible
+n_raw = Image.open('/tmp/n_hires.png').convert("RGBA")
+arr   = np.array(n_raw)
+ys, xs = np.where(arr[:,:,3] > 10)
+y0,y1 = ys.min(), ys.max()
+x0,x1 = xs.min(), xs.max()
+n_tight = n_raw.crop((x0-4, y0-4, x1+4, y1+4))
+
+# Canvas carré = diagonale du N → pas de clipping quelle que soit la rotation
+diag  = int(np.sqrt(n_tight.width**2 + n_tight.height**2)) + 20
+n_crop = Image.new("RGBA", (diag, diag), (0, 0, 0, 0))
+ox = (diag - n_tight.width)  // 2
+oy = (diag - n_tight.height) // 2
+n_crop.alpha_composite(n_tight, (ox, oy))
+print(f"N canvas: {n_crop.size}  (tight: {n_tight.size}, diag: {diag})")
+
+# ── Easing : smootherstep sur 360° (départ/arrivée doux) ─────────────────────
+def smootherstep(t):
+    t = max(0.0, min(1.0, t))
+    return t*t*t*(t*(6*t - 15) + 10)
+
+# ── Rendu des frames ──────────────────────────────────────────────────────────
+for frame in range(TOTAL):
+    t      = frame / (TOTAL - 1)
+    angle  = 90.0 * smootherstep(t)    # 0 → 90° counterclockwise (une seule fois)
+
+    rotated = n_crop.rotate(angle, resample=Image.BICUBIC, expand=False)
+
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    px = (W - rotated.width)  // 2
+    py = (H - rotated.height) // 2
+    canvas.alpha_composite(rotated, (px, py))
+    canvas.save(f"{FDIR}/frame_{frame:04d}.png")
+
+print(f"Frames: {TOTAL} ({TOTAL/FPS:.1f}s)")
+
+# ── Assemblage ProRes 4444 ────────────────────────────────────────────────────
+subprocess.run([
+    'ffmpeg', '-y', '-r', str(FPS),
+    '-i', f'{FDIR}/frame_%04d.png',
+    '-c:v', 'prores_ks', '-profile:v', '4444',
+    '-pix_fmt', 'yuva444p10le', OUT
+], check=True, capture_output=True)
+print(f"Done → {OUT}")
